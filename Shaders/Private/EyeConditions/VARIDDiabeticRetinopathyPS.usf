@@ -1,0 +1,93 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "../VARIDCommon.ush"
+
+Texture2D InSceneColorSRV;
+Texture2DArray<float> InFloaterSRVArray;
+int InNumFloaters;
+float InFloaterSpeed;
+float InFloaterScale;
+float InContrastReduction;
+float2 InNormalizedGazePosition;
+float InAspectRatio;
+float InMaxMipLevel;
+float InBlurStrength; // global blur strength. no pixel will be be blurred less than this value
+
+float2 GetDirectionFromIndex(int index)
+{
+    float angle = frac(sin(index * 91.928f) * 43758.5453f) * TAU; // [0, 2PI]
+    return float2(cos(angle), sin(angle));
+}
+
+float2 GetCenterOffsetFromIndex(int index)
+{
+    float x = frac(sin(index * 13.37f) * 12345.6789f);
+    float y = frac(cos(index * 7.42f) * 98765.4321f);
+    return float2(x, y); // 0..1 screen space
+}
+
+void MainPS
+(
+    in noperspective float4 UVAndScreenPos : TEXCOORD0,
+    out float4 OutColor : SV_Target0
+)
+{    
+    float FloaterMask = 0.0;
+
+    for (int i = 0; i < InNumFloaters; ++i)
+    {
+        // Per-floater scale variation
+        float scale = InFloaterScale * (0.8 + 0.4 * frac(sin(i * 19.7f) * 523.1f));
+
+        // Floater movement
+        float2 direction = GetDirectionFromIndex(i);
+        float2 baseOffset = GetCenterOffsetFromIndex(i);
+        float2 centerUV = frac(direction * InFloaterSpeed * View.RealTime + baseOffset); // looping motion
+        
+        // Add subtle jitter per floater
+        float2 jitterFreq = float2(1.5f + 0.2f * i, 1.0f + 0.15f * i); // varied frequency
+        float2 jitterAmp = float2(0.001f, 0.001f); // small amplitude
+        float2 jitter = VARID_Wave_Flicker(View.RealTime, jitterFreq, jitterAmp);
+        centerUV += jitter;
+
+        // Local UV in floater space
+        float2 localUV = (UVAndScreenPos.xy - centerUV) / scale;
+        localUV.x *= InAspectRatio; // aspect correction
+
+        // Apply rotation
+        float raw = frac(sin(i * 33.33f) * 6543.21f);
+        float rotationSpeed = 0.5 * lerp(-1.0, 1.0, raw); // [-1.0 .. 1.0] rad/sec
+        float angle = View.RealTime * rotationSpeed;
+        float2x2 rot = float2x2(cos(angle), -sin(angle), sin(angle), cos(angle));
+        localUV = mul(rot, localUV);
+
+        // Soft radial falloff
+        float dist = length(localUV);
+        float radialFalloff = 1.0 - smoothstep(0.9, 1.0, dist); // feathered edge
+
+        // Convert to 0..1 UV for sampling
+        float2 floaterUV = localUV * 0.5 + 0.5;
+        float2 safeUV = clamp(floaterUV, 0.0, 1.0);
+
+        // Sample from texture array layer i
+        float FloaterSample = InFloaterSRVArray.Sample(View.SharedBilinearClampedSampler, float3(safeUV, i)).r * radialFalloff;
+
+        FloaterMask = max(FloaterMask, FloaterSample);
+    }
+
+    // Compute mip level for blur
+    float Mip = clamp(FloaterMask * InMaxMipLevel, InBlurStrength, InMaxMipLevel);  
+
+    // Sample scene color with blur
+    float4 SceneColor = InSceneColorSRV.SampleLevel(View.SharedTrilinearClampedSampler, UVAndScreenPos.xy, Mip);
+
+    // Reduce contrast
+    float3 FinalColor = ApplyContrast(SceneColor.rgb, InContrastReduction);
+
+    OutColor = float4(FinalColor, SceneColor.a);
+}

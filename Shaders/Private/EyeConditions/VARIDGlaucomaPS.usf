@@ -1,0 +1,36 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "../VARIDCommon.ush"
+
+Texture2D InSceneColorSRV;
+Texture2D InScotomaSRV;
+float InMaxMipLevel;
+float2 InNormalizedGazePosition;
+float InAspectRatio;
+
+void MainPS
+(
+    in noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+)
+{
+    float2 ViewportUV = UVAndScreenPos.xy;//BufferUVToViewportUV(UVAndScreenPos.xy);
+    float2 NDC = ConvertFrom0to1ToMinus1to1(ViewportUV);
+    float2 Delta = NDC - InNormalizedGazePosition;
+    Delta.x *= InAspectRatio;
+    
+    // Re-center for scotoma texture UV lookup
+    float2 ScotomaUV = 0.5f + 0.5f * Delta;
+    
+    // map the scotoma greyscale mask to a valid mip level
+    float BlurStrength = InScotomaSRV.Sample(View.SharedBilinearClampedSampler, ScotomaUV).r;
+    float ScaledBlurStrength = clamp(BlurStrength * InMaxMipLevel, 0.0, InMaxMipLevel);
+	
+    float4 FinalColor = InSceneColorSRV.SampleLevel(View.SharedTrilinearClampedSampler, UVAndScreenPos.xy, ScaledBlurStrength);
+    OutColor = FinalColor;
+}

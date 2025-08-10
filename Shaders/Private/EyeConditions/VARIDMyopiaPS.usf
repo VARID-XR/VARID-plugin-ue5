@@ -1,0 +1,34 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "../VARIDCommon.ush"
+
+Texture2D InSceneColorSRV;
+float InFocalLength_CM;
+float InBlurStrength;
+
+//Focused Region = Near objects
+//Blurred Region = Distant objects
+
+void MainPS
+(
+    in noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+)
+{
+    float2 ScreenUV = UVAndScreenPos.zw * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
+    
+    float LinearDepth = CalcSceneDepth(ScreenUV);
+    
+    float BlurFalloff = 100.0f;
+    float BlurFactor = saturate((LinearDepth - InFocalLength_CM) / BlurFalloff);
+
+    float4 FocussedColor = InSceneColorSRV.SampleLevel(View.SharedBilinearClampedSampler, UVAndScreenPos.xy, 0);
+    float4 BlurredColor = InSceneColorSRV.SampleLevel(View.SharedTrilinearClampedSampler, UVAndScreenPos.xy, InBlurStrength);
+
+    OutColor = lerp(FocussedColor, BlurredColor, BlurFactor);
+}

@@ -1,0 +1,19 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "../VARIDCommon.ush"
+
+Texture2D InSceneColorSRV;
+
+void MainPS
+(
+    in noperspective float4 UVAndScreenPos : TEXCOORD0,
+	out float4 OutColor : SV_Target0
+)
+{
+    OutColor = InSceneColorSRV.Sample(View.SharedBilinearClampedSampler, UVAndScreenPos.xy);
+}

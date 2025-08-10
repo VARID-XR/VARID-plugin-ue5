@@ -1,0 +1,37 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "../VARIDCommon.ush"
+
+Texture2D InSceneColorSRV;
+float2 InNormalizedGazePosition; // range: -1 to 1
+float InAspectRatio;
+
+void MainPS
+(
+    in noperspective float4 UVAndScreenPos : TEXCOORD0,
+    out float4 OutColor : SV_Target0
+)
+{    
+    float Radius = 0.04f;
+    float SmoothEdge = 0.05f; // falloff width
+
+    float4 SceneColor = InSceneColorSRV.Sample(View.SharedBilinearClampedSampler, UVAndScreenPos.xy);
+    
+    float2 ViewportUV = BufferUVToViewportUV(UVAndScreenPos.xy);
+    float2 NDC = ConvertFrom0to1ToMinus1to1(ViewportUV);
+    float2 Delta = NDC - InNormalizedGazePosition;
+    Delta.x *= InAspectRatio;
+
+    float DistanceFromGazePoint = length(Delta);
+    float Mask = smoothstep(Radius, Radius + SmoothEdge, DistanceFromGazePoint);
+
+    float3 Red = float3(1, 0, 0);
+    float3 FinalColor = lerp(Red, SceneColor.rgb, Mask);
+
+    OutColor = float4(FinalColor, SceneColor.a);
+}

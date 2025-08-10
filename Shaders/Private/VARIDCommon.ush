@@ -1,0 +1,151 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/Random.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/SceneTexturesCommon.ush"
+
+static const float MaskThreshold = 0.5f;
+
+static const float TAU = 6.2831853f; // Constant for 2 * PI
+
+static const uint2 TopLeftOffset = uint2(-1, -1);
+static const uint2 TopOffset = uint2(0, -1);
+static const uint2 TopRightOffset = uint2(1, -1);
+static const uint2 RightOffset = uint2(1, 0);
+static const uint2 BottomRightOffset = uint2(1, 1);
+static const uint2 BottomOffset = uint2(0, 1);
+static const uint2 BottomLeftOffset = uint2(-1, 1);
+static const uint2 LeftOffset = uint2(-1, 0);
+
+float2 GetRandomUVOutsideMask(Texture2D<float> MaskSRV, SamplerState Sampler, uint2 SeedPixelID, float2 SeedUV)
+{
+	float2 UV = SeedUV;// float2(1.0, 1.0);
+	float MaskValue = 0.0;
+
+	do {
+		// ~13 ALU
+		//UV.x = PseudoRandom(SeedPixelID.x);
+		//UV.y = PseudoRandom(SeedPixelID.y);
+		//
+		// ~10
+		//UV.x = RandFast(SeedPixelID.xy);
+		//UV.y = RandFast(SeedPixelID.yx);
+
+		// ~8
+		//UV.x = RandBBSfloat(SeedPixelID.x);
+		//awUV.y = RandBBSfloat(SeedPixelID.y);
+
+		// ~ 7
+		UV.x = InterleavedGradientNoise(UV.x, 1);
+		UV.y = InterleavedGradientNoise(UV.y, 1);
+
+		//UV = ((UV - 0.5) * 0.5) + SeedUV;
+
+		MaskValue = MaskSRV.SampleLevel(Sampler, UV, 0).r;
+	} while (MaskValue > MaskThreshold);// || MaskValue < (MaskThreshold - 0.2));
+
+	return UV;
+}
+
+float GetRandomFloat()
+{
+    float randomFloat = frac(float(View.Random) * (1.0 / 4294967296.0)); // Normalize to [0,1)
+    return randomFloat;
+}
+
+// common color manipulation functions
+
+float3 ApplyContrast(float3 color, float factor)
+{
+    float3 mid = float3(0.5, 0.5, 0.5);
+    return lerp(mid, color, factor);
+}
+
+// common UV conversion functions
+
+float2 ConvertFrom0to1ToMinus1to1(float2 value)
+{
+	// Convert from [0, 1] to [-1, 1]
+	return (value * 2.0) - 1.0;
+}
+
+// Common waveform functions
+
+// 1. Smooth sinusoidal waveform (good for pendular nystagmus or soft wobble)
+float2 VARID_Wave_Sin(float t, float2 freq, float2 amp)
+{
+    return sin(t * freq * TAU) * amp;
+}
+
+// 2. Sawtooth waveform (jerk-like hard reset)
+float2 VARID_Wave_Sawtooth(float t, float2 freq, float2 amp)
+{
+    float2 phase = frac(t * freq);
+    return (phase - 0.5f) * 2.0f * amp;
+}
+
+// 3. Asymmetric triangle wave
+float VARID_Triangle_Asymmetric(float phase, float skew)
+{
+    return (phase < skew)
+        ? (phase / skew)
+        : (1.0f - (phase - skew) / (1.0f - skew));
+}
+
+float2 VARID_Wave_AsymmetricTriangle(float t, float2 freq, float2 amp, float2 skew)
+{
+    float2 phase = frac(t * freq);
+    float2 tri;
+    tri.x = VARID_Triangle_Asymmetric(phase.x, skew.x);
+    tri.y = VARID_Triangle_Asymmetric(phase.y, skew.y);
+    return (tri - 0.5f) * 2.0f * amp;
+}
+
+// 4. Flicker-style spike function (stochastic/triggered)
+float2 VARID_Wave_Flicker(float t, float2 freq, float2 amp)
+{
+    float2 sinVal = sin(t * freq * TAU);
+    float2 flick = step(0.97f, sinVal); // sharp spike when sin() near 1
+    return flick * amp;
+}
+
+float2 VARID_Wave_Flicker_Duty(float t, float2 freq, float2 amp, float duty, float2 phase)
+{
+    float2 ph = frac(t * freq + phase);
+    float2 pulse = 1.0 - step(duty, ph); // 1 when ph < duty, else 0
+    return pulse * amp;
+}
+
+// Simple hash function for repeatable randomness
+float hash11(float n)
+{
+    return frac(sin(n) * 43758.5453);
+}
+
+float2 VARID_Wave_AsymmetricTriangle_Randomized(float t, float2 freq, float2 amp, float2 skew, float randStrength)
+{
+    float2 phase = frac(t * freq);
+
+    // Current cycle index per axis
+    float2 cycleIndex = floor(t * freq);
+
+    // Random modifiers per cycle
+    float2 randSkew = skew + (hash11(cycleIndex.x + 17.0) - 0.5) * randStrength;
+    float2 randAmp = amp + (hash11(cycleIndex.x + 53.0) - 0.5) * randStrength * amp;
+
+    // Clamp skew so it stays in (0,1) range
+    randSkew = clamp(randSkew, 0.05, 0.95);
+
+    float2 tri;
+    tri.x = VARID_Triangle_Asymmetric(phase.x, randSkew.x);
+    tri.y = VARID_Triangle_Asymmetric(phase.y, randSkew.y);
+
+    return (tri - 0.5f) * 2.0f * randAmp;
+}
