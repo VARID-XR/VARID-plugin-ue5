@@ -8,7 +8,7 @@
 - VARID is supported by industry and research leaders and ultimately aims to become the ‘standard’ for simulating eye conditions.
 
 ## Demo Video
-<a href="https://youtu.be/P5pva5u3Bcw" target="_blank">
+<a href="https://youtu.be/seA_JNsRZPU" target="_blank">
   <img src="Documentation/Screenshots/YouTube-Thumb.png" alt="VARID Demo 2025" width="800" />
 </a>
 
