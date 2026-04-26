@@ -15,7 +15,11 @@ RWTexture2D<float4> OutUAV;
 [numthreads(8, 8, 1)]
 void MainCS(uint3 DispatchThreadID : SV_DispatchThreadID)
 {
-    float2 UV = InTexelSize * (DispatchThreadID.xy + 0.5);
-    float4 OutColor = InSRV.Sample(InSampler, UV);
+    float2 UV = InTexelSize * (float2(DispatchThreadID.xy) + 0.5f);
+
+    // Compute shaders do not have implicit texture gradients.
+    // SampleLevel gives an explicit mip level and is SM5-compatible.
+    float4 OutColor = InSRV.SampleLevel(InSampler, UV, 0.0f);
+
     OutUAV[DispatchThreadID.xy] = OutColor;
 }
