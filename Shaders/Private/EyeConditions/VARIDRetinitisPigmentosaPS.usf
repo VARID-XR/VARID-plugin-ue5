@@ -17,14 +17,14 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
 	out float4 OutColor : SV_Target0
 )
-{    
+{
     float2 ViewportUV = BufferUVToViewportUV(UVAndScreenPos.xy);
     float2 NDC = ConvertFrom0to1ToMinus1to1(ViewportUV);
     float2 Delta = NDC - InNormalizedGazePosition;
     Delta.x *= InAspectRatio;
-    float DistanceFromGazePoint = length(Delta);    
+    float DistanceFromGazePoint = length(Delta);
     float Mask = 1.0 - smoothstep(0.0, InRadius, DistanceFromGazePoint);
-    
+
     float4 SceneColor = InSceneColorSRV.Sample(View.SharedBilinearClampedSampler, UVAndScreenPos.xy);
     float3 Black = float3(0.0, 0.0, 0.0);
     float3 FinalColor = lerp(Black, SceneColor.rgb, Mask);

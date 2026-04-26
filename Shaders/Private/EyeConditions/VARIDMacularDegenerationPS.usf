@@ -19,14 +19,14 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
 	out float4 OutColor : SV_Target0
 )
-{    
+{
     float2 ViewportUV = UVAndScreenPos.xy; //BufferUVToViewportUV(UVAndScreenPos.xy);
     float2 NDC = ConvertFrom0to1ToMinus1to1(ViewportUV);
     float2 Delta = NDC - InNormalizedGazePosition;
     Delta.x *= InAspectRatio;
     float DistanceFromGazePoint = length(Delta);
     float Mask = 1.0 - smoothstep(0.0, InRadius, DistanceFromGazePoint);
-    
+
     float ScaledBlurStrength = clamp(Mask * InBlurStrength, 0.0, InMaxMipLevel); // scaled to fit the number of mip levels available
     OutColor = InSceneColorSRV.SampleLevel(View.SharedTrilinearClampedSampler, UVAndScreenPos.xy, ScaledBlurStrength);
 }

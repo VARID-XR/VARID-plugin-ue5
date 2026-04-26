@@ -12,7 +12,7 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
 	out float4 OutColor : SV_Target0
 )
-{    
+{
     float2 ViewportUV = BufferUVToViewportUV(UVAndScreenPos.xy);
     // display a UV map (red and green gradient)
     OutColor = float4(ViewportUV.x, ViewportUV.y, 0, 1);

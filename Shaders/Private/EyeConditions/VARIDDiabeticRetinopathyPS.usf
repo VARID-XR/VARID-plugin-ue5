@@ -36,7 +36,7 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
     out float4 OutColor : SV_Target0
 )
-{    
+{
     float FloaterMask = 0.0;
 
     for (int i = 0; i < InNumFloaters; ++i)
@@ -48,7 +48,7 @@ void MainPS
         float2 direction = GetDirectionFromIndex(i);
         float2 baseOffset = GetCenterOffsetFromIndex(i);
         float2 centerUV = frac(direction * InFloaterSpeed * View.RealTime + baseOffset); // looping motion
-        
+
         // Add subtle jitter per floater
         float2 jitterFreq = float2(1.5f + 0.2f * i, 1.0f + 0.15f * i); // varied frequency
         float2 jitterAmp = float2(0.001f, 0.001f); // small amplitude
@@ -81,7 +81,7 @@ void MainPS
     }
 
     // Compute mip level for blur
-    float Mip = clamp(FloaterMask * InMaxMipLevel, InBlurStrength, InMaxMipLevel);  
+    float Mip = clamp(FloaterMask * InMaxMipLevel, InBlurStrength, InMaxMipLevel);
 
     // Sample scene color with blur
     float4 SceneColor = InSceneColorSRV.SampleLevel(View.SharedTrilinearClampedSampler, UVAndScreenPos.xy, Mip);

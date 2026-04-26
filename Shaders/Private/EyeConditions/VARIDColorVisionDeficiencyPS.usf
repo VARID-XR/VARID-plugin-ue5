@@ -17,7 +17,7 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
     out float4 OutColor : SV_Target0
 )
-{    
+{
     float3x3 InCvdMatrix = float3x3
     (
         InCvdMatrixRow0,

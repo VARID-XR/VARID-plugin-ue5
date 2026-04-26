@@ -19,11 +19,11 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
 	out float4 OutColor : SV_Target0
 )
-{    
+{
     float2 ScreenUV = UVAndScreenPos.zw * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
-    
+
     float LinearDepth = CalcSceneDepth(ScreenUV);
-    
+
     float BlurFalloff = 100.0f;
     float BlurFactor = saturate((InFocalLength_CM - LinearDepth) / BlurFalloff);
 

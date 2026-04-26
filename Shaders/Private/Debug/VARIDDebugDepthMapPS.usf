@@ -12,11 +12,11 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
 	out float4 OutColor : SV_Target0
 )
-{   
+{
     float2 ScreenUV = UVAndScreenPos.zw * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
-    
+
     float SceneDepth = CalcSceneDepth(ScreenUV);
-    
+
     //float linearDepth_CM = CalcSceneDepth(ScreenUV);
     float displayDepth = saturate(SceneDepth / 10000.0f);
     OutColor = float4(displayDepth.xxx, 1.0);

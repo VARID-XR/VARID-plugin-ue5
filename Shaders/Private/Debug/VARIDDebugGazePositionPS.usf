@@ -16,12 +16,12 @@ void MainPS
     in noperspective float4 UVAndScreenPos : TEXCOORD0,
     out float4 OutColor : SV_Target0
 )
-{    
+{
     float Radius = 0.04f;
     float SmoothEdge = 0.05f; // falloff width
 
     float4 SceneColor = InSceneColorSRV.Sample(View.SharedBilinearClampedSampler, UVAndScreenPos.xy);
-    
+
     float2 ViewportUV = BufferUVToViewportUV(UVAndScreenPos.xy);
     float2 NDC = ConvertFrom0to1ToMinus1to1(ViewportUV);
     float2 Delta = NDC - InNormalizedGazePosition;
