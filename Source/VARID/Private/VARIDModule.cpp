@@ -7,15 +7,43 @@
 #include "VARIDSceneViewExtension.h"
 
 #include "CoreMinimal.h"
-#include "EngineMinimal.h"
-#include "HAL/FileManager.h"
-#include "ImageUtils.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "RenderingThread.h"
 #include "Runtime/Launch/Resources/Version.h"
+#include "ShaderCore.h"
+#include "UObject/GCObject.h"
 
 #define LOCTEXT_NAMESPACE "FVARIDModule"
+
+class FVARIDTextureReferencer : public FGCObject
+{
+public:
+	explicit FVARIDTextureReferencer(FVARIDModule& InModule)
+		: Module(InModule)
+	{
+	}
+
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override
+	{
+		Collector.AddReferencedObject(Module.GetLeftEyeConditionState().ScotomaTexture);
+		Collector.AddReferencedObject(Module.GetRightEyeConditionState().ScotomaTexture);
+		Collector.AddReferencedObject(Module.GetMonoEyeConditionState().ScotomaTexture);
+
+		Collector.AddReferencedObject(Module.GetLeftEyeConditionState().FloaterTextureArray);
+		Collector.AddReferencedObject(Module.GetRightEyeConditionState().FloaterTextureArray);
+		Collector.AddReferencedObject(Module.GetMonoEyeConditionState().FloaterTextureArray);
+	}
+
+	virtual FString GetReferencerName() const override
+	{
+		return TEXT("FVARIDTextureReferencer");
+	}
+
+private:
+	FVARIDModule& Module;
+};
 
 void FVARIDModule::StartupModule()
 {
@@ -41,19 +69,32 @@ void FVARIDModule::ShutdownModule()
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
 
-	// Cleanup the virtual source directory mapping.
-	ResetAllShaderSourceDirectoryMappings();
-
 	EndRendering();	// Module could be shutdown before we explicitly end rendering. Ensure cleanup.
+	delete TextureReferencer;
+	TextureReferencer = nullptr;
+
+	// UE 5.5 does not expose a per-mapping remove API. Do not call
+	// ResetAllShaderSourceDirectoryMappings(), because that also clears mappings
+	// owned by the engine and other plugins.
 }
 
 void FVARIDModule::BeginRendering(EVARIDSamplerType InSamplerType)
 {
 	UE_LOG(LogTemp, Display, TEXT("VARID: FVARIDModule_BeginRendering"));
 
+	EnsureTextureReferencer();
+
 	if (!SceneViewExtension)
 	{
 		SceneViewExtension = FSceneViewExtensions::NewExtension<FVARIDSceneViewExtension>(InSamplerType);
+	}
+}
+
+void FVARIDModule::EnsureTextureReferencer()
+{
+	if (!TextureReferencer)
+	{
+		TextureReferencer = new FVARIDTextureReferencer(*this);
 	}
 }
 
@@ -63,6 +104,7 @@ void FVARIDModule::EndRendering()
 
 	if (SceneViewExtension)
 	{
+		FlushRenderingCommands();
 		SceneViewExtension.Reset();
 		SceneViewExtension = nullptr;
 	}

@@ -10,8 +10,9 @@
 #include "VARIDEyeConditionState.h"
 
 class FVARIDSceneViewExtension;
+class FVARIDTextureReferencer;
 
-// This class is the hub of the VARID plugin. 
+// This class is the hub of the VARID plugin.
 // The IModuleInterface gives us singleton behaviour which is perfect because we only want one instance
 
 class FVARIDModule : public IModuleInterface
@@ -57,12 +58,13 @@ public:
 public:
 	void BeginRendering(EVARIDSamplerType InSamplerType);
 	void EndRendering();
+	void EnsureTextureReferencer();
 
 public:
 	TSharedPtr<FVARIDSceneViewExtension> GetSceneViewExtension() const { return SceneViewExtension; }
 
-	FVARIDEyeConditionState& GetEyeConditionState(const EVARIDEyeType Eye) 
-	{ 		
+	FVARIDEyeConditionState& GetEyeConditionState(const EVARIDEyeType Eye)
+	{
 		switch (Eye)
 		{
 		case EVARIDEyeType::Mono:
@@ -86,6 +88,7 @@ public:
 
 private:
 	TSharedPtr<FVARIDSceneViewExtension, ESPMode::ThreadSafe> SceneViewExtension;
+	FVARIDTextureReferencer* TextureReferencer = nullptr;
 	FVARIDEyeConditionState LeftEyeConditionState;
 	FVARIDEyeConditionState RightEyeConditionState;
 	FVARIDEyeConditionState MonoEyeConditionState;

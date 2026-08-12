@@ -11,6 +11,7 @@
 
 Texture2D InSRV;
 RWTexture2D<float4> OutUAV;
+float2 InOutputSize;
 
 // The reason for separating channels is to reduce bank conflicts in the local data memory controller.
 // A large stride will cause more threads to collide on the same memory bank.
@@ -72,6 +73,13 @@ void Load1Pixel(uint index, out float3 pixel)
     pixel = asfloat(uint3(CacheR[index], CacheG[index], CacheB[index]));
 }
 
+float3 LoadSourcePixel(int2 pixelCoord)
+{
+    int2 maxCoord = max(int2(InOutputSize) - int2(1, 1), int2(0, 0));
+    int2 clampedCoord = clamp(pixelCoord, int2(0, 0), maxCoord);
+    return InSRV[clampedCoord].rgb;
+}
+
 // Blur two pixels horizontally.  This reduces LDS reads and pixel unpacking.
 void BlurHorizontallyAndCacheResult(uint outIndex, uint leftMostIndex)
 {
@@ -119,8 +127,8 @@ void MainCS
 
     // Store 4 pixels in LDS (each thread reads 4 pixels)
     int destIdx = GroupThreadID.x + row;
-    Store2Pixels(destIdx + 0, InSRV[ThreadUpperLeft + uint2(0, 0)].rgb, InSRV[ThreadUpperLeft + uint2(1, 0)].rgb);
-    Store2Pixels(destIdx + 8, InSRV[ThreadUpperLeft + uint2(0, 1)].rgb, InSRV[ThreadUpperLeft + uint2(1, 1)].rgb);
+    Store2Pixels(destIdx + 0, LoadSourcePixel(ThreadUpperLeft + int2(0, 0)), LoadSourcePixel(ThreadUpperLeft + int2(1, 0)));
+    Store2Pixels(destIdx + 8, LoadSourcePixel(ThreadUpperLeft + int2(0, 1)), LoadSourcePixel(ThreadUpperLeft + int2(1, 1)));
 
 
     GroupMemoryBarrierWithGroupSync();
@@ -139,5 +147,8 @@ void MainCS
     uint topMostIndex = (GroupThreadID.y << 3) + GroupThreadID.x;
     float3 blurredPixel = BlurVertically(topMostIndex);
 
-    OutUAV[DispatchThreadID.xy] = float4(blurredPixel.r, blurredPixel.g, blurredPixel.b, 1.0);
+    if (all(DispatchThreadID.xy < uint2(InOutputSize)))
+    {
+        OutUAV[DispatchThreadID.xy] = float4(blurredPixel.r, blurredPixel.g, blurredPixel.b, 1.0);
+    }
 }

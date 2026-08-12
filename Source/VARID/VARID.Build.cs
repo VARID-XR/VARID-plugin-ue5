@@ -4,7 +4,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using UnrealBuildTool;
-using System.IO;
 
 public class VARID : ModuleRules
 {
@@ -13,23 +12,6 @@ public class VARID : ModuleRules
 		//PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		bUseUnity = false;
-
-		PublicIncludePaths.AddRange(
-			new string[] {
-
-				// ... add public include paths required here ...
-			}
-			);
-
-
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				//Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private"),
-				//Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Private/PostProcess"),
-				Path.Combine(EngineDirectory, "Source/Runtime/Renderer/Internal")
-				// ... add other private include paths required here ...
-			}
-			);
 
 		// Where you would place the dependency would depend on whether it was needed in the Public or Private folder
         // (most dependencies are Private since the Public folder typically contains only interfaces).
@@ -67,7 +49,7 @@ public class VARID : ModuleRules
 			new string[]
 			{
                 "Core",
-                "RenderCore", // Needed for AddShaderSourceDirectoryMapping & ResetAllShaderSourceDirectoryMappings
+                "RenderCore", // Needed for AddShaderSourceDirectoryMapping
 				"RHI",
                 "Projects", // Needed for IPluginManager
 				"Renderer",

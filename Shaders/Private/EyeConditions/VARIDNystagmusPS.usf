@@ -8,8 +8,7 @@
 #include "../VARIDCommon.ush"
 
 Texture2D InSceneColorSRV;
-float2 InFrequency;
-float2 InAmplitude;
+float2 InOffset;
 
 void MainPS
 (
@@ -17,7 +16,6 @@ void MainPS
     out float4 OutColor : SV_Target0
 )
 {
-    float2 Offset = VARID_Wave_AsymmetricTriangle_Randomized(View.RealTime, InFrequency, InAmplitude, float2(0.99f, 0.99f), 0.9);
-    float2 JitteredUV = UVAndScreenPos.xy + Offset;
+    float2 JitteredUV = UVAndScreenPos.xy + InOffset;
     OutColor = InSceneColorSRV.Sample(View.SharedBilinearClampedSampler, JitteredUV);
 }

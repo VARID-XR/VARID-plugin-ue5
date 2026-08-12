@@ -6,7 +6,18 @@
 #include "VARIDBlueprintFunctionLibrary.h"
 #include "VARIDModule.h"
 
-#include "EngineMinimal.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+#include "GameFramework/PlayerController.h"
+
+namespace
+{
+	void ClearTextureRefs(FVARIDEyeConditionState& State)
+	{
+		State.ScotomaTexture = nullptr;
+		State.FloaterTextureArray = nullptr;
+	}
+}
 
 void UVARIDBlueprintFunctionLibrary::BeginRendering(EVARIDSamplerType InSamplerType)
 {
@@ -36,6 +47,12 @@ FVector2f UVARIDBlueprintFunctionLibrary::GetNormalizedMousePosition(APlayerCont
 	{
 		//UE_LOG(LogTemp, Display, TEXT("Mouse Position: X = %.1f, Y = %.1f"), MouseX, MouseY);
 
+		if (!GEngine || !GEngine->GameViewport)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GameViewport is null"));
+			return FVector2f::ZeroVector;
+		}
+
 		FVector2D ViewportSize;
 		GEngine->GameViewport->GetViewportSize(ViewportSize);
 
@@ -58,38 +75,52 @@ FVector2f UVARIDBlueprintFunctionLibrary::GetNormalizedMousePosition(APlayerCont
 void UVARIDBlueprintFunctionLibrary::SetDebugSolidColor(EVARIDEyeType Eye)
 {
 	FVARIDEyeConditionState& Params = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(Params);
 	Params.ActiveCondition = EVARIDEyeConditionType::DebugSolidColor;
 }
 
 void UVARIDBlueprintFunctionLibrary::SetDebugUVMap(EVARIDEyeType Eye)
 {
 	FVARIDEyeConditionState& Params = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(Params);
 	Params.ActiveCondition = EVARIDEyeConditionType::DebugUVMap;
 }
 
 void UVARIDBlueprintFunctionLibrary::SetDebugDepthMap(EVARIDEyeType Eye)
 {
 	FVARIDEyeConditionState& Params = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(Params);
 	Params.ActiveCondition = EVARIDEyeConditionType::DebugDepthMap;
 }
 
 void UVARIDBlueprintFunctionLibrary::SetDebugPassthrough(EVARIDEyeType Eye)
 {
 	FVARIDEyeConditionState& Params = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(Params);
 	Params.ActiveCondition = EVARIDEyeConditionType::DebugPassthrough;
 }
 
 void UVARIDBlueprintFunctionLibrary::SetDebugGazePosition(EVARIDEyeType Eye)
 {
 	FVARIDEyeConditionState& Params = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(Params);
 	Params.ActiveCondition = EVARIDEyeConditionType::DebugGazePosition;
 }
 
 void UVARIDBlueprintFunctionLibrary::ClearAllEyeConditions()
 {
-	FVARIDModule::Get().GetLeftEyeConditionState().ActiveCondition = EVARIDEyeConditionType::None;
-	FVARIDModule::Get().GetRightEyeConditionState().ActiveCondition = EVARIDEyeConditionType::None;
-	FVARIDModule::Get().GetMonoEyeConditionState().ActiveCondition = EVARIDEyeConditionType::None;
+	FVARIDModule& Module = FVARIDModule::Get();
+	FVARIDEyeConditionState& LeftEyeState = Module.GetLeftEyeConditionState();
+	FVARIDEyeConditionState& RightEyeState = Module.GetRightEyeConditionState();
+	FVARIDEyeConditionState& MonoEyeState = Module.GetMonoEyeConditionState();
+
+	LeftEyeState.ActiveCondition = EVARIDEyeConditionType::None;
+	RightEyeState.ActiveCondition = EVARIDEyeConditionType::None;
+	MonoEyeState.ActiveCondition = EVARIDEyeConditionType::None;
+
+	ClearTextureRefs(LeftEyeState);
+	ClearTextureRefs(RightEyeState);
+	ClearTextureRefs(MonoEyeState);
 }
 
 void UVARIDBlueprintFunctionLibrary::SetCataractsParams(EVARIDEyeType Eye, float ContrastReduction, float BlurStrength, float GlareStrength, float BrightnessThreshold)
@@ -100,6 +131,7 @@ void UVARIDBlueprintFunctionLibrary::SetCataractsParams(EVARIDEyeType Eye, float
 	BrightnessThreshold = FMath::Clamp(BrightnessThreshold, 0.0f, 1.0f);
 
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::Cataracts;
 	State.ContrastReduction = ContrastReduction;
 	State.BlurStrength = BlurStrength;
@@ -110,6 +142,7 @@ void UVARIDBlueprintFunctionLibrary::SetCataractsParams(EVARIDEyeType Eye, float
 void UVARIDBlueprintFunctionLibrary::SetColorVisionDeficiencyParams(EVARIDEyeType Eye, EVARIDColorVisionDeficiencyType CVDType)
 {
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::ColorVisionDeficiency;
 	State.CVDType = CVDType;
 }
@@ -122,7 +155,11 @@ void UVARIDBlueprintFunctionLibrary::SetDiabeticRetinopathyParams(EVARIDEyeType 
 	FloaterSpeed = FMath::Clamp(FloaterSpeed, 0.0f, 1.0f);
 	FloaterScale = FMath::Clamp(FloaterScale, 0.1f, 1.0f);
 
-	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	FVARIDModule& Module = FVARIDModule::Get();
+	Module.EnsureTextureReferencer();
+
+	FVARIDEyeConditionState& State = Module.GetEyeConditionState(Eye);
+	State.ScotomaTexture = nullptr;
 	State.ActiveCondition = EVARIDEyeConditionType::DiabeticRetinopathy;
 	State.ContrastReduction = ContrastReduction;
 	State.BlurStrength = BlurStrength;
@@ -134,7 +171,11 @@ void UVARIDBlueprintFunctionLibrary::SetDiabeticRetinopathyParams(EVARIDEyeType 
 
 void UVARIDBlueprintFunctionLibrary::SetGlaucomaParams(EVARIDEyeType Eye, UTexture2D* ScotomaTexture)
 {
-	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	FVARIDModule& Module = FVARIDModule::Get();
+	Module.EnsureTextureReferencer();
+
+	FVARIDEyeConditionState& State = Module.GetEyeConditionState(Eye);
+	State.FloaterTextureArray = nullptr;
 	State.ActiveCondition = EVARIDEyeConditionType::Glaucoma;
 	State.ScotomaTexture = ScotomaTexture;
 }
@@ -145,6 +186,7 @@ void UVARIDBlueprintFunctionLibrary::SetHyperopiaParams(EVARIDEyeType Eye, float
 	FocalLength = FMath::Clamp(FocalLength, 0.0f, 1000.0f);
 
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::Hyperopia;
 	State.BlurStrength = BlurStrength;
 	State.FocalLength_CM = FocalLength;
@@ -156,6 +198,7 @@ void UVARIDBlueprintFunctionLibrary::SetMacularDegenerationParams(EVARIDEyeType 
 	Radius = FMath::Clamp(Radius, 0.0f, 1.0f);
 
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::MacularDegeneration;
 	State.BlurStrength = BlurStrength;
 	State.Radius = Radius;
@@ -167,6 +210,7 @@ void UVARIDBlueprintFunctionLibrary::SetMyopiaParams(EVARIDEyeType Eye, float Bl
 	FocalLength = FMath::Clamp(FocalLength, 0.0f, 1000.0f);
 
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::Myopia;
 	State.BlurStrength = BlurStrength;
 	State.FocalLength_CM = FocalLength;
@@ -180,6 +224,7 @@ void UVARIDBlueprintFunctionLibrary::SetNystagmusParams(EVARIDEyeType Eye, float
 	FrequencyY = FMath::Clamp(FrequencyY, 0.0f, 50.0f);
 
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::Nystagmus;
 	State.AmplitudeVector = FVector2f(AmplitudeX, AmplitudeY);
 	State.FrequencyVector = FVector2f(FrequencyX, FrequencyY);
@@ -190,6 +235,7 @@ void UVARIDBlueprintFunctionLibrary::SetRetinitisPigmentosaParams(EVARIDEyeType 
 	Radius = FMath::Clamp(Radius, 0.0f, 2.0f);
 
 	FVARIDEyeConditionState& State = FVARIDModule::Get().GetEyeConditionState(Eye);
+	ClearTextureRefs(State);
 	State.ActiveCondition = EVARIDEyeConditionType::RetinitisPigmentosa;
 	State.Radius = Radius;
 }

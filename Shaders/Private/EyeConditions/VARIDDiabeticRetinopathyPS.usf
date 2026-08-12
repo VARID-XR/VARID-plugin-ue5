@@ -10,26 +10,12 @@
 Texture2D InSceneColorSRV;
 Texture2DArray<float> InFloaterSRVArray;
 int InNumFloaters;
-float InFloaterSpeed;
-float InFloaterScale;
 float InContrastReduction;
-float2 InNormalizedGazePosition;
 float InAspectRatio;
 float InMaxMipLevel;
 float InBlurStrength; // global blur strength. no pixel will be be blurred less than this value
-
-float2 GetDirectionFromIndex(int index)
-{
-    float angle = frac(sin(index * 91.928f) * 43758.5453f) * TAU; // [0, 2PI]
-    return float2(cos(angle), sin(angle));
-}
-
-float2 GetCenterOffsetFromIndex(int index)
-{
-    float x = frac(sin(index * 13.37f) * 12345.6789f);
-    float y = frac(cos(index * 7.42f) * 98765.4321f);
-    return float2(x, y); // 0..1 screen space
-}
+float4 InFloaterCenterScale[32]; // xy=center UV, z=scale
+float4 InFloaterRotation[32]; // x=cos, y=sin
 
 void MainPS
 (
@@ -41,30 +27,16 @@ void MainPS
 
     for (int i = 0; i < InNumFloaters; ++i)
     {
-        // Per-floater scale variation
-        float scale = InFloaterScale * (0.8 + 0.4 * frac(sin(i * 19.7f) * 523.1f));
-
-        // Floater movement
-        float2 direction = GetDirectionFromIndex(i);
-        float2 baseOffset = GetCenterOffsetFromIndex(i);
-        float2 centerUV = frac(direction * InFloaterSpeed * View.RealTime + baseOffset); // looping motion
-
-        // Add subtle jitter per floater
-        float2 jitterFreq = float2(1.5f + 0.2f * i, 1.0f + 0.15f * i); // varied frequency
-        float2 jitterAmp = float2(0.001f, 0.001f); // small amplitude
-        float2 jitter = VARID_Wave_Flicker(View.RealTime, jitterFreq, jitterAmp);
-        centerUV += jitter;
+        float4 centerScale = InFloaterCenterScale[i];
+        float4 rotation = InFloaterRotation[i];
 
         // Local UV in floater space
-        float2 localUV = (UVAndScreenPos.xy - centerUV) / scale;
+        float2 localUV = (UVAndScreenPos.xy - centerScale.xy) / centerScale.z;
         localUV.x *= InAspectRatio; // aspect correction
 
-        // Apply rotation
-        float raw = frac(sin(i * 33.33f) * 6543.21f);
-        float rotationSpeed = 0.5 * lerp(-1.0, 1.0, raw); // [-1.0 .. 1.0] rad/sec
-        float angle = View.RealTime * rotationSpeed;
-        float2x2 rot = float2x2(cos(angle), -sin(angle), sin(angle), cos(angle));
-        localUV = mul(rot, localUV);
+        localUV = float2(
+            rotation.x * localUV.x - rotation.y * localUV.y,
+            rotation.y * localUV.x + rotation.x * localUV.y);
 
         // Soft radial falloff
         float dist = length(localUV);

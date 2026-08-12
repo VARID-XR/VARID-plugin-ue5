@@ -1,0 +1,50 @@
+// This source code is provided "as is" without warranty of any kind, either express or implied. Use at your own risk.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#pragma once
+
+#include "../VARIDCommon.ush"
+
+Texture2D<float4> InSRV;
+RWTexture2D<float4> OutUAV;
+float2 InInputSize;
+float2 InOutputSize;
+
+static const float Weights5[3] = { 6.0f / 16.0f, 4.0f / 16.0f, 1.0f / 16.0f };
+
+float4 LoadSourcePixel(int2 PixelCoord)
+{
+    int2 MaxCoord = max(int2(InInputSize) - int2(1, 1), int2(0, 0));
+    return InSRV[clamp(PixelCoord, int2(0, 0), MaxCoord)];
+}
+
+float GaussianWeight5(int Offset)
+{
+    return Weights5[abs(Offset)];
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+    if (any(DispatchThreadID.xy >= uint2(InOutputSize)))
+    {
+        return;
+    }
+
+    int2 SourceCenter = int2(DispatchThreadID.xy) * 2 + int2(1, 1);
+    float4 FilteredColor = float4(0.0, 0.0, 0.0, 0.0);
+
+    [unroll]
+    for (int Y = -2; Y <= 2; ++Y)
+    {
+        [unroll]
+        for (int X = -2; X <= 2; ++X)
+        {
+            FilteredColor += LoadSourcePixel(SourceCenter + int2(X, Y)) * GaussianWeight5(X) * GaussianWeight5(Y);
+        }
+    }
+
+    OutUAV[DispatchThreadID.xy] = FilteredColor;
+}

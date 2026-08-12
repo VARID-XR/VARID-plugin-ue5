@@ -12,8 +12,83 @@
 
 #include "ScreenPass.h"
 #include "SceneRenderTargetParameters.h"
-#include "PostProcess/PostProcessMaterialInputs.h"
-#include <SystemTextures.h>
+
+namespace
+{
+	constexpr int32 VARIDMaxFloaters = 32;
+	constexpr float VARIDTau = 6.2831853f;
+
+	float VARIDFrac(float InValue)
+	{
+		return InValue - FMath::FloorToFloat(InValue);
+	}
+
+	FVector2f VARIDGetFloaterDirection(int32 InIndex)
+	{
+		const float Angle = VARIDFrac(FMath::Sin(InIndex * 91.928f) * 43758.5453f) * VARIDTau;
+		return FVector2f(FMath::Cos(Angle), FMath::Sin(Angle));
+	}
+
+	FVector2f VARIDGetFloaterBaseOffset(int32 InIndex)
+	{
+		return FVector2f
+		(
+			VARIDFrac(FMath::Sin(InIndex * 13.37f) * 12345.6789f),
+			VARIDFrac(FMath::Cos(InIndex * 7.42f) * 98765.4321f)
+		);
+	}
+
+	FVector2f VARIDGetFloaterJitter(float InRealTime, int32 InIndex)
+	{
+		const FVector2f JitterFrequency(1.5f + 0.2f * InIndex, 1.0f + 0.15f * InIndex);
+		const FVector2f JitterAmplitude(0.001f, 0.001f);
+
+		return FVector2f
+		(
+			FMath::Sin(InRealTime * JitterFrequency.X * VARIDTau) >= 0.97f ? JitterAmplitude.X : 0.0f,
+			FMath::Sin(InRealTime * JitterFrequency.Y * VARIDTau) >= 0.97f ? JitterAmplitude.Y : 0.0f
+		);
+	}
+
+	float VARIDHash11(float InValue)
+	{
+		return VARIDFrac(FMath::Sin(InValue) * 43758.5453f);
+	}
+
+	float VARIDTriangleAsymmetric(float InPhase, float InSkew)
+	{
+		return InPhase < InSkew
+			? InPhase / InSkew
+			: 1.0f - (InPhase - InSkew) / (1.0f - InSkew);
+	}
+
+	FVector2f VARIDWaveAsymmetricTriangleRandomized(float InRealTime, FVector2f InFrequency, FVector2f InAmplitude, FVector2f InSkew, float InRandomStrength)
+	{
+		const FVector2f Phase(VARIDFrac(InRealTime * InFrequency.X), VARIDFrac(InRealTime * InFrequency.Y));
+		const float CycleIndexX = FMath::FloorToFloat(InRealTime * InFrequency.X);
+
+		const float RandomSkewOffset = (VARIDHash11(CycleIndexX + 17.0f) - 0.5f) * InRandomStrength;
+		const FVector2f RandomSkew
+		(
+			FMath::Clamp(InSkew.X + RandomSkewOffset, 0.05f, 0.95f),
+			FMath::Clamp(InSkew.Y + RandomSkewOffset, 0.05f, 0.95f)
+		);
+
+		const float RandomAmpFactor = (VARIDHash11(CycleIndexX + 53.0f) - 0.5f) * InRandomStrength;
+		const FVector2f RandomAmplitude = InAmplitude + (InAmplitude * RandomAmpFactor);
+		const FVector2f Triangle
+		(
+			VARIDTriangleAsymmetric(Phase.X, RandomSkew.X),
+			VARIDTriangleAsymmetric(Phase.Y, RandomSkew.Y)
+		);
+
+		return FVector2f
+		(
+			(Triangle.X - 0.5f) * 2.0f * RandomAmplitude.X,
+			(Triangle.Y - 0.5f) * 2.0f * RandomAmplitude.Y
+		);
+	}
+}
 
 FVARIDRendering::FVARIDRendering(EVARIDSamplerType InSamplerType)
 {
@@ -40,15 +115,26 @@ uint8 FVARIDRendering::CalculateNumMips2D(FIntPoint InSize)
 	uint8 mipsWidth = CalculateNumMips1D(InSize.X);
 	uint8 mipsHeight = CalculateNumMips1D(InSize.Y);
 	uint8 NumberOfMipsToGenerate = mipsWidth > mipsHeight ? mipsWidth : mipsHeight;
-	return FMath::Min(NumberOfMipsToGenerate, FVARIDRendering::MAX_NUM_MIP_LEVELS);
+	return FMath::Max<uint8>(FMath::Min(NumberOfMipsToGenerate, FVARIDRendering::MAX_NUM_MIP_LEVELS), 1);
 }
 
-FRDGTextureRef FVARIDRendering::CreateBlurredTexture(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const EVARIDSamplerType InSamplerType)
+uint8 FVARIDRendering::CalculateNumMipsForBlur(FIntPoint InSize, float InMaxBlurStrength)
 {
-	const FIntPoint ViewSize = InSceneColor.ViewRect.Size();
-	const uint8 NumberOfMipsToGenerate = CalculateNumMips2D(ViewSize);
+	const uint8 AvailableMips = CalculateNumMips2D(InSize);
+	const int32 RequestedMips = FMath::CeilToInt(FMath::Max(InMaxBlurStrength, 0.0f)) + 1;
+	return static_cast<uint8>(FMath::Clamp(RequestedMips, 1, static_cast<int32>(AvailableMips)));
+}
 
+FRDGTextureRef FVARIDRendering::CreateBlurredTexture(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const EVARIDSamplerType InSamplerType, const uint8 InNumMipsToGenerate)
+{
 	ensureAlwaysMsgf(InSceneColor.Texture->Desc.ArraySize == 1, TEXT("InSceneColor is still arrayed (ArraySize=%d). Ensure CopyFromSlice is used in the scene view extension or bind FirstArraySlice."), InSceneColor.Texture->Desc.ArraySize);
+
+	if (InNumMipsToGenerate <= 1)
+	{
+		return InSceneColor.Texture;
+	}
+
+	const FIntPoint ViewSize = InSceneColor.ViewRect.Size();
 
 	FRDGTextureDesc BlurredTextureDesc = FRDGTextureDesc::Create2D
 	(
@@ -56,7 +142,7 @@ FRDGTextureRef FVARIDRendering::CreateBlurredTexture(FRDGBuilder& InGraphBuilder
 		InSceneColor.Texture->Desc.Format,
 		FClearValueBinding::None,
 		TexCreate_ShaderResource | TexCreate_UAV,
-		NumberOfMipsToGenerate
+		InNumMipsToGenerate
 	);
 
 	FRDGTextureRef BlurredTexture = InGraphBuilder.CreateTexture(BlurredTextureDesc, TEXT("VARID BlurredTexture"));
@@ -66,13 +152,13 @@ FRDGTextureRef FVARIDRendering::CreateBlurredTexture(FRDGBuilder& InGraphBuilder
 	switch (InSamplerType)
 	{
 	case EVARIDSamplerType::PointSampling:
-		Result = BuildSamplerPyramid_RenderThread(InGraphBuilder, InSceneColor.ViewRect, InSceneColor.Texture, BlurredTexture, InView, NumberOfMipsToGenerate, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
+		Result = BuildSamplerPyramid_RenderThread(InGraphBuilder, InSceneColor.ViewRect, InSceneColor.Texture, BlurredTexture, InView, InNumMipsToGenerate, TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
 		break;
 	case EVARIDSamplerType::BilinearSampling:
-		Result = BuildSamplerPyramid_RenderThread(InGraphBuilder, InSceneColor.ViewRect, InSceneColor.Texture, BlurredTexture, InView, NumberOfMipsToGenerate, TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
+		Result = BuildSamplerPyramid_RenderThread(InGraphBuilder, InSceneColor.ViewRect, InSceneColor.Texture, BlurredTexture, InView, InNumMipsToGenerate, TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI());
 		break;
 	case EVARIDSamplerType::GaussianSampling:
-		Result = BuildGaussianPyramid_RenderThread(InGraphBuilder, InSceneColor.ViewRect, InSceneColor.Texture, BlurredTexture, InView, NumberOfMipsToGenerate);
+		Result = BuildGaussianPyramid_RenderThread(InGraphBuilder, InSceneColor.ViewRect, InSceneColor.Texture, BlurredTexture, InNumMipsToGenerate);
 		break;
 	default:
 		break;
@@ -131,6 +217,7 @@ bool FVARIDRendering::BuildSamplerPyramid_RenderThread(FRDGBuilder& InGraphBuild
 		FVARIDBasicResampleCS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDBasicResampleCS::FParameters>();
 		PassParameters->View = InView.ViewUniformBuffer;
 		PassParameters->InTexelSize = TexelSize;
+		PassParameters->InOutputSize = FVector2f(static_cast<float>(DispatchSize.X), static_cast<float>(DispatchSize.Y));
 		PassParameters->InSampler = InSampler;
 		PassParameters->InSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(OutTexture, MipLevel - 1));
 		PassParameters->OutUAV = InGraphBuilder.CreateUAV(FRDGTextureUAVDesc(OutTexture, MipLevel));
@@ -146,17 +233,14 @@ bool FVARIDRendering::BuildSamplerPyramid_RenderThread(FRDGBuilder& InGraphBuild
 	return true;
 }
 
-bool FVARIDRendering::BuildGaussianPyramid_RenderThread(FRDGBuilder& InGraphBuilder, const FIntRect InViewRect, const FRDGTextureRef InTexture, const FRDGTextureRef OutTexture, const FSceneView& InView, const uint8 InNumMips)
+bool FVARIDRendering::BuildGaussianPyramid_RenderThread(FRDGBuilder& InGraphBuilder, const FIntRect InViewRect, const FRDGTextureRef InTexture, const FRDGTextureRef OutTexture, const uint8 InNumMips)
 {
 	check(InTexture);
 	check(OutTexture);
 
 	const FRDGTextureDesc& OutTextureDesc = OutTexture->Desc;
 
-	FRDGTextureRef BlurredMipTexture = InGraphBuilder.CreateTexture(OutTextureDesc, TEXT("BlurredMipTexture"));
-
-	TShaderMapRef<FVARIDGaussianBlurCS> GaussianBlurComputeShader(GlobalShaderMap);
-	TShaderMapRef<FVARIDBasicResampleCS> ResampleComputeShader(GlobalShaderMap);
+	TShaderMapRef<FVARIDGaussianDownsampleCS> GaussianDownsampleComputeShader(GlobalShaderMap);
 
 	if (InNumMips > OutTextureDesc.NumMips)
 	{
@@ -185,42 +269,21 @@ bool FVARIDRendering::BuildGaussianPyramid_RenderThread(FRDGBuilder& InGraphBuil
 		int32 LoResMipLevel = MipLevel;
 		int32 HiResMipLevel = MipLevel - 1;
 
-		const FIntPoint LoResTextureSize(FMath::Max(InViewRect.Width() >> LoResMipLevel, 1), FMath::Max(InViewRect.Height() >> LoResMipLevel, 1));
-		const FVector2f LoResTexelSize(1.0f / LoResTextureSize.X, 1.0f / LoResTextureSize.Y);
 		const FIntPoint LoResDispatchSize(FMath::Max(InViewRect.Width() >> LoResMipLevel, 1), FMath::Max(InViewRect.Height() >> LoResMipLevel, 1));
 		const FIntPoint HiResDispatchSize(FMath::Max(InViewRect.Width() >> HiResMipLevel, 1), FMath::Max(InViewRect.Height() >> HiResMipLevel, 1));
 
-		// DONT: downsample THEN Filter. Noise will alias back in.
-		// DO: filter THEN downsample
-
-		// blur
+		// Filter while downsampling so each mip costs one compute pass.
 		{
-			FVARIDGaussianBlurCS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDGaussianBlurCS::FParameters>();
-			PassParameters->View = InView.ViewUniformBuffer;
+			FVARIDGaussianDownsampleCS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDGaussianDownsampleCS::FParameters>();
+			PassParameters->InInputSize = FVector2f(static_cast<float>(HiResDispatchSize.X), static_cast<float>(HiResDispatchSize.Y));
+			PassParameters->InOutputSize = FVector2f(static_cast<float>(LoResDispatchSize.X), static_cast<float>(LoResDispatchSize.Y));
 			PassParameters->InSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(OutTexture, HiResMipLevel));
-			PassParameters->OutUAV = InGraphBuilder.CreateUAV(FRDGTextureUAVDesc(BlurredMipTexture, HiResMipLevel));
-
-			FComputeShaderUtils::AddPass(
-				InGraphBuilder,
-				RDG_EVENT_NAME("VARID - Build Gaussian Pyramid - Gaussian Blur - MipLevel=%d", HiResMipLevel),
-				GaussianBlurComputeShader,
-				PassParameters,
-				FComputeShaderUtils::GetGroupCount(HiResDispatchSize, FComputeShaderUtils::kGolden2DGroupSize));
-		}
-
-		// downsample
-		{
-			FVARIDBasicResampleCS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDBasicResampleCS::FParameters>();
-			PassParameters->View = InView.ViewUniformBuffer;
-			PassParameters->InTexelSize = LoResTexelSize;
-			PassParameters->InSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-			PassParameters->InSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::CreateForMipLevel(BlurredMipTexture, HiResMipLevel));
 			PassParameters->OutUAV = InGraphBuilder.CreateUAV(FRDGTextureUAVDesc(OutTexture, LoResMipLevel));
 
 			FComputeShaderUtils::AddPass(
 				InGraphBuilder,
-				RDG_EVENT_NAME("VARID - Build Gaussian Pyramid - Downsample - MipLevel=%d", LoResMipLevel),
-				ResampleComputeShader,
+				RDG_EVENT_NAME("VARID - Build Gaussian Pyramid - Gaussian Downsample - MipLevel=%d", LoResMipLevel),
+				GaussianDownsampleComputeShader,
 				PassParameters,
 				FComputeShaderUtils::GetGroupCount(LoResDispatchSize, FComputeShaderUtils::kGolden2DGroupSize));
 		}
@@ -232,16 +295,16 @@ bool FVARIDRendering::BuildGaussianPyramid_RenderThread(FRDGBuilder& InGraphBuil
 /************************************************************************/
 // DEBUG
 
-bool FVARIDRendering::DrawDebugSolidColor_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding)
+bool FVARIDRendering::DrawDebugSolidColor_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDDebugSolidColorPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVARIDDebugSolidColorPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDDebugSolidColorPS::FParameters>();
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -257,17 +320,17 @@ bool FVARIDRendering::DrawDebugSolidColor_RenderThread(FRDGBuilder& InGraphBuild
 	return true;
 }
 
-bool FVARIDRendering::DrawDebugUVMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding)
+bool FVARIDRendering::DrawDebugUVMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDDebugUVMapPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVARIDDebugUVMapPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDDebugUVMapPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -283,20 +346,20 @@ bool FVARIDRendering::DrawDebugUVMap_RenderThread(FRDGBuilder& InGraphBuilder, c
 	return true;
 }
 
-bool FVARIDRendering::DrawDebugDepthMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding)
+bool FVARIDRendering::DrawDebugDepthMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDDebugDepthMapPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FSceneTextureShaderParameters SceneTextures = CreateSceneTextureShaderParameters(InGraphBuilder, InView, ESceneTextureSetupMode::All);	// must be manually registered with the graph builder
 
 	FVARIDDebugDepthMapPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDDebugDepthMapPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->SceneTextures = SceneTextures;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -312,18 +375,18 @@ bool FVARIDRendering::DrawDebugDepthMap_RenderThread(FRDGBuilder& InGraphBuilder
 	return true;
 }
 
-bool FVARIDRendering::DrawDebugPassthrough_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding)
+bool FVARIDRendering::DrawDebugPassthrough_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDDebugPassthroughPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVARIDDebugPassthroughPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDDebugPassthroughPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(InSceneColor.Texture));
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -339,20 +402,20 @@ bool FVARIDRendering::DrawDebugPassthrough_RenderThread(FRDGBuilder& InGraphBuil
 	return true;
 }
 
-bool FVARIDRendering::DrawDebugGazePosition_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InNormalizedGazePosition)
+bool FVARIDRendering::DrawDebugGazePosition_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InNormalizedGazePosition)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDDebugGazePositionPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVARIDDebugGazePositionPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDDebugGazePositionPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(InSceneColor.Texture));
 	PassParameters->InNormalizedGazePosition = InNormalizedGazePosition;
 	PassParameters->InAspectRatio = InSceneColor.ViewRect.Width() / (float)InSceneColor.ViewRect.Height();
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -371,24 +434,25 @@ bool FVARIDRendering::DrawDebugGazePosition_RenderThread(FRDGBuilder& InGraphBui
 /************************************************************************/
 // EYE CONDITIONS
 
-bool FVARIDRendering::DrawCataracts_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const float InBlurStrength, const float InContrastReduction, const float InBrightThreshold, const float InGlareStrength)
+bool FVARIDRendering::DrawCataracts_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const float InBlurStrength, const float InContrastReduction, const float InBrightThreshold, const float InGlareStrength)
 {
 	const TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	const TShaderMapRef<FVARIDCataractsPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor.ViewRect);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
-	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType);
+	const uint8 NumberOfMipsToGenerate = CalculateNumMipsForBlur(InSceneColor.ViewRect.Size(), InBlurStrength);
+	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType, NumberOfMipsToGenerate);
 
 	FVARIDCataractsPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDCataractsPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(BlurredTexture));
-	PassParameters->InBlurStrength = InBlurStrength;
+	PassParameters->InBlurStrength = FMath::Min(InBlurStrength, static_cast<float>(NumberOfMipsToGenerate - 1));
 	PassParameters->InContrastReduction = InContrastReduction;
 	PassParameters->InBrightThreshold = InBrightThreshold;
 	PassParameters->InGlareStrength = InGlareStrength;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -404,13 +468,13 @@ bool FVARIDRendering::DrawCataracts_RenderThread(FRDGBuilder& InGraphBuilder, co
 	return true;
 }
 
-bool FVARIDRendering::DrawColorVisionDeficiency_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const EVARIDColorVisionDeficiencyType InCVDType)
+bool FVARIDRendering::DrawColorVisionDeficiency_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const EVARIDColorVisionDeficiencyType InCVDType)
 {
 	const TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	const TShaderMapRef<FVARIDColorVisionDeficiencyPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVector3f MatrixRow0, MatrixRow1, MatrixRow2;
 
@@ -449,7 +513,7 @@ bool FVARIDRendering::DrawColorVisionDeficiency_RenderThread(FRDGBuilder& InGrap
 	PassParameters->InCvdMatrixRow0 = MatrixRow0;
 	PassParameters->InCvdMatrixRow1 = MatrixRow1;
 	PassParameters->InCvdMatrixRow2 = MatrixRow2;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -464,7 +528,7 @@ bool FVARIDRendering::DrawColorVisionDeficiency_RenderThread(FRDGBuilder& InGrap
 	return true;
 }
 
-bool FVARIDRendering::DrawDiabeticRetinopathy_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, FRHITexture* InFloaterTextureArrayRHI, const FVector2f InNormalizedGazePosition, const uint8 InNumFloaters, const float InFloaterSpeed, const float InFloaterScale, const float InBlurStrength, const float InContrastReduction)
+bool FVARIDRendering::DrawDiabeticRetinopathy_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, FRHITexture* InFloaterTextureArrayRHI, const uint8 InNumFloaters, const float InFloaterSpeed, const float InFloaterScale, const float InBlurStrength, const float InContrastReduction)
 {
 	if (!InFloaterTextureArrayRHI)
 	{
@@ -477,34 +541,47 @@ bool FVARIDRendering::DrawDiabeticRetinopathy_RenderThread(FRDGBuilder& InGraphB
 	TShaderMapRef<FVARIDDiabeticRetinopathyPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor.ViewRect);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	uint16 FloaterArraySize = InFloaterTextureArrayRHI->GetDesc().ArraySize;
 
-	uint8 NumFloaters = InNumFloaters;
-	NumFloaters = FMath::Clamp(NumFloaters, 0, FloaterArraySize);
-	NumFloaters = FMath::Clamp(NumFloaters, 0, 32);
+	const uint8 NumFloaters = static_cast<uint8>(FMath::Clamp<int32>(InNumFloaters, 0, FMath::Min<int32>(FloaterArraySize, VARIDMaxFloaters)));
 
 	FRDGTextureRef FloaterTextureArray = RegisterExternalTexture(InGraphBuilder, InFloaterTextureArrayRHI, TEXT("VARID Floater Texture Array"));
 
 	const FIntPoint ViewportSize = InSceneColor.ViewRect.Size();
 	const uint8 NumberOfMipsToGenerate = CalculateNumMips2D(ViewportSize);
 
-	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType);
+	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType, NumberOfMipsToGenerate);
 
 	FVARIDDiabeticRetinopathyPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDDiabeticRetinopathyPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(BlurredTexture));
 	PassParameters->InFloaterSRVArray = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(FloaterTextureArray));
 	PassParameters->InNumFloaters = NumFloaters;
-	PassParameters->InFloaterSpeed = InFloaterSpeed;
 	PassParameters->InContrastReduction = InContrastReduction;
-	PassParameters->InNormalizedGazePosition = InNormalizedGazePosition;
 	PassParameters->InAspectRatio = InSceneColor.ViewRect.Width() / (float)InSceneColor.ViewRect.Height();
-	PassParameters->InFloaterScale = InFloaterScale;
-	PassParameters->InMaxMipLevel = NumberOfMipsToGenerate;
-	PassParameters->InBlurStrength = InBlurStrength;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->InMaxMipLevel = NumberOfMipsToGenerate - 1;
+	PassParameters->InBlurStrength = FMath::Min(InBlurStrength, static_cast<float>(NumberOfMipsToGenerate - 1));
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
+
+	const float RealTime = InView.Family ? static_cast<float>(InView.Family->Time.GetRealTimeSeconds()) : 0.0f;
+	for (int32 FloaterIndex = 0; FloaterIndex < VARIDMaxFloaters; ++FloaterIndex)
+	{
+		const float ScaleVariation = 0.8f + 0.4f * VARIDFrac(FMath::Sin(FloaterIndex * 19.7f) * 523.1f);
+		const float Scale = InFloaterScale * ScaleVariation;
+
+		const FVector2f Center = VARIDGetFloaterDirection(FloaterIndex) * InFloaterSpeed * RealTime
+			+ VARIDGetFloaterBaseOffset(FloaterIndex)
+			+ VARIDGetFloaterJitter(RealTime, FloaterIndex);
+
+		const float RawRotation = VARIDFrac(FMath::Sin(FloaterIndex * 33.33f) * 6543.21f);
+		const float RotationSpeed = 0.5f * FMath::Lerp(-1.0f, 1.0f, RawRotation);
+		const float RotationAngle = RealTime * RotationSpeed;
+
+		PassParameters->InFloaterCenterScale[FloaterIndex] = FVector4f(VARIDFrac(Center.X), VARIDFrac(Center.Y), Scale, 0.0f);
+		PassParameters->InFloaterRotation[FloaterIndex] = FVector4f(FMath::Cos(RotationAngle), FMath::Sin(RotationAngle), 0.0f, 0.0f);
+	}
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -520,12 +597,10 @@ bool FVARIDRendering::DrawDiabeticRetinopathy_RenderThread(FRDGBuilder& InGraphB
 	return true;
 }
 
-bool FVARIDRendering::DrawGlaucoma_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, FRHITexture* InScotomaTextureRHI, const FVector2f InNormalizedGazePosition)
+bool FVARIDRendering::DrawGlaucoma_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, FRHITexture* InScotomaTextureRHI, const FVector2f InNormalizedGazePosition)
 {
 	if (!InScotomaTextureRHI)
 	{
-		//FRDGTextureRef ScotomaTexture = GSystemTextures.GetBlackDummy(InGraphBuilder);	// Could use a dummy texture, but it would not be correct
-
 		UE_LOG(LogTemp, Warning, TEXT("VARID DrawGlaucoma: InScotomaTextureRHI is null! Cannot draw Glaucoma effect."));
 		return false;
 	}
@@ -534,23 +609,23 @@ bool FVARIDRendering::DrawGlaucoma_RenderThread(FRDGBuilder& InGraphBuilder, con
 	TShaderMapRef<FVARIDGlaucomaPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor.ViewRect);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FRDGTextureRef ScotomaTexture = RegisterExternalTexture(InGraphBuilder, InScotomaTextureRHI, TEXT("VARID Scotoma Texture"));
 
 	const FIntPoint ViewportSize = InSceneColor.ViewRect.Size();
 	const uint8 NumberOfMipsToGenerate = CalculateNumMips2D(ViewportSize);
 
-	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType);
+	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType, NumberOfMipsToGenerate);
 
 	FVARIDGlaucomaPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDGlaucomaPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(BlurredTexture));
 	PassParameters->InScotomaSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ScotomaTexture));
-	PassParameters->InMaxMipLevel = NumberOfMipsToGenerate;
+	PassParameters->InMaxMipLevel = NumberOfMipsToGenerate - 1;
 	PassParameters->InNormalizedGazePosition = InNormalizedGazePosition;
 	PassParameters->InAspectRatio = InSceneColor.ViewRect.Width() / (float)InSceneColor.ViewRect.Height();
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -566,15 +641,16 @@ bool FVARIDRendering::DrawGlaucoma_RenderThread(FRDGBuilder& InGraphBuilder, con
 	return true;
 }
 
-bool FVARIDRendering::DrawHyperopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const float InFocalLength_CM, const float InBlurStrength)
+bool FVARIDRendering::DrawHyperopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const float InFocalLength_CM, const float InBlurStrength)
 {
 	const TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	const TShaderMapRef<FVARIDHyperopiaPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor.ViewRect);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
-	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType);
+	const uint8 NumberOfMipsToGenerate = CalculateNumMipsForBlur(InSceneColor.ViewRect.Size(), InBlurStrength);
+	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType, NumberOfMipsToGenerate);
 
 	FSceneTextureShaderParameters SceneTextureShaderParameters = CreateSceneTextureShaderParameters(InGraphBuilder, InView, ESceneTextureSetupMode::All);	// must be manually registered with the graph builder
 
@@ -583,8 +659,8 @@ bool FVARIDRendering::DrawHyperopia_RenderThread(FRDGBuilder& InGraphBuilder, co
 	PassParameters->SceneTextures = SceneTextureShaderParameters;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(BlurredTexture));
 	PassParameters->InFocalLength_CM = InFocalLength_CM;
-	PassParameters->InBlurStrength = InBlurStrength;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->InBlurStrength = FMath::Min(InBlurStrength, static_cast<float>(NumberOfMipsToGenerate - 1));
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -600,28 +676,28 @@ bool FVARIDRendering::DrawHyperopia_RenderThread(FRDGBuilder& InGraphBuilder, co
 	return true;
 }
 
-bool FVARIDRendering::DrawMacularDegeneration_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InNormalizedGazePosition, const float InRadius, const float InBlurStrength)
+bool FVARIDRendering::DrawMacularDegeneration_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InNormalizedGazePosition, const float InRadius, const float InBlurStrength)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDMacularDegenerationPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor.ViewRect);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	const FIntPoint ViewportSize = InSceneColor.ViewRect.Size();
-	const uint8 NumberOfMipsToGenerate = CalculateNumMips2D(ViewportSize);
+	const uint8 NumberOfMipsToGenerate = CalculateNumMipsForBlur(ViewportSize, InBlurStrength);
 
-	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType);
+	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType, NumberOfMipsToGenerate);
 
 	FVARIDMacularDegenerationPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDMacularDegenerationPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(BlurredTexture));
-	PassParameters->InMaxMipLevel = NumberOfMipsToGenerate;
+	PassParameters->InMaxMipLevel = NumberOfMipsToGenerate - 1;
 	PassParameters->InNormalizedGazePosition = InNormalizedGazePosition;
 	PassParameters->InAspectRatio = InSceneColor.ViewRect.Width() / (float)InSceneColor.ViewRect.Height();
 	PassParameters->InRadius = InRadius;
 	PassParameters->InBlurStrength = InBlurStrength;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -637,15 +713,16 @@ bool FVARIDRendering::DrawMacularDegeneration_RenderThread(FRDGBuilder& InGraphB
 	return true;
 }
 
-bool FVARIDRendering::DrawMyopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const float InFocalLength_CM, const float InBlurStrength)
+bool FVARIDRendering::DrawMyopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const float InFocalLength_CM, const float InBlurStrength)
 {
 	const TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	const TShaderMapRef<FVARIDMyopiaPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor.ViewRect);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
-	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType);
+	const uint8 NumberOfMipsToGenerate = CalculateNumMipsForBlur(InSceneColor.ViewRect.Size(), InBlurStrength);
+	FRDGTextureRef BlurredTexture = CreateBlurredTexture(InGraphBuilder, InSceneColor, InView, SamplerType, NumberOfMipsToGenerate);
 
 	FSceneTextureShaderParameters SceneTextureShaderParameters = CreateSceneTextureShaderParameters(InGraphBuilder, InView, ESceneTextureSetupMode::All);	// must be manually registered with the graph builder
 
@@ -654,8 +731,8 @@ bool FVARIDRendering::DrawMyopia_RenderThread(FRDGBuilder& InGraphBuilder, const
 	PassParameters->SceneTextures = SceneTextureShaderParameters;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(BlurredTexture));
 	PassParameters->InFocalLength_CM = InFocalLength_CM;
-	PassParameters->InBlurStrength = InBlurStrength;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->InBlurStrength = FMath::Min(InBlurStrength, static_cast<float>(NumberOfMipsToGenerate - 1));
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -671,20 +748,20 @@ bool FVARIDRendering::DrawMyopia_RenderThread(FRDGBuilder& InGraphBuilder, const
 	return true;
 }
 
-bool FVARIDRendering::DrawNystagmus_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InFrequency, const FVector2f InAmplitude)
+bool FVARIDRendering::DrawNystagmus_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InFrequency, const FVector2f InAmplitude)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDNystagmusPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVARIDNystagmusPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDNystagmusPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
 	PassParameters->InSceneColorSRV = InGraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(InSceneColor.Texture));
-	PassParameters->InFrequency = InFrequency;
-	PassParameters->InAmplitude = InAmplitude;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	const float RealTime = InView.Family ? static_cast<float>(InView.Family->Time.GetRealTimeSeconds()) : 0.0f;
+	PassParameters->InOffset = VARIDWaveAsymmetricTriangleRandomized(RealTime, InFrequency, InAmplitude, FVector2f(0.99f, 0.99f), 0.9f);
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,
@@ -700,13 +777,13 @@ bool FVARIDRendering::DrawNystagmus_RenderThread(FRDGBuilder& InGraphBuilder, co
 	return true;
 }
 
-bool FVARIDRendering::DrawRetinitisPigmentosa_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InNormalizedGazePosition, const float InRadius)
+bool FVARIDRendering::DrawRetinitisPigmentosa_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InNormalizedGazePosition, const float InRadius)
 {
 	TShaderMapRef<FScreenPassVS> VertexShader(GlobalShaderMap);
 	TShaderMapRef<FVARIDRetinitisPigmentosaPS> PixelShader(GlobalShaderMap);
 
 	const FScreenPassTextureViewport InputViewport(InSceneColor);
-	const FScreenPassTextureViewport OutputViewport(InSceneColor.ViewRect);
+	const FScreenPassTextureViewport OutputViewport(InRenderTarget);
 
 	FVARIDRetinitisPigmentosaPS::FParameters* PassParameters = InGraphBuilder.AllocParameters<FVARIDRetinitisPigmentosaPS::FParameters>();
 	PassParameters->View = InView.ViewUniformBuffer;
@@ -714,7 +791,7 @@ bool FVARIDRendering::DrawRetinitisPigmentosa_RenderThread(FRDGBuilder& InGraphB
 	PassParameters->InNormalizedGazePosition = InNormalizedGazePosition;
 	PassParameters->InAspectRatio = InSceneColor.ViewRect.Width() / (float)InSceneColor.ViewRect.Height();
 	PassParameters->InRadius = InRadius;
-	PassParameters->RenderTargets[0] = InRenderTargetBinding;
+	PassParameters->RenderTargets[0] = InRenderTarget.GetRenderTargetBinding();
 
 	AddDrawScreenPass(
 		InGraphBuilder,

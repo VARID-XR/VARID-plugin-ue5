@@ -22,27 +22,28 @@ private:
 private: // HELPERS
 	uint8 CalculateNumMips1D(int32 InValue);
 	uint8 CalculateNumMips2D(FIntPoint InSize);
+	uint8 CalculateNumMipsForBlur(FIntPoint InSize, float InMaxBlurStrength);
 
 private: // COMPUTE
-	FRDGTextureRef CreateBlurredTexture(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const EVARIDSamplerType SamplerType);
+	FRDGTextureRef CreateBlurredTexture(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const EVARIDSamplerType SamplerType, const uint8 InNumMipsToGenerate);
 	bool BuildSamplerPyramid_RenderThread(FRDGBuilder& InGraphBuilder, const FIntRect InViewRect, const FRDGTextureRef InTexture, FRDGTextureRef OutSamplerMipTexture, const FSceneView& InView, const uint8 InNumMips, FRHISamplerState* InSampler);
-	bool BuildGaussianPyramid_RenderThread(FRDGBuilder& InGraphBuilder, const FIntRect InViewRect, const FRDGTextureRef InTexture, FRDGTextureRef OutGaussianMipTexture, const FSceneView& InView, const uint8 InNumMips);
+	bool BuildGaussianPyramid_RenderThread(FRDGBuilder& InGraphBuilder, const FIntRect InViewRect, const FRDGTextureRef InTexture, FRDGTextureRef OutGaussianMipTexture, const uint8 InNumMips);
 
 public: // DEBUG
-	bool DrawDebugPassthrough_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding);
-	bool DrawDebugGazePosition_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InNormalizedGazePosition);
-	bool DrawDebugSolidColor_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding);
-	bool DrawDebugUVMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding);
-	bool DrawDebugDepthMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding);
+	bool DrawDebugPassthrough_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget);
+	bool DrawDebugGazePosition_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InNormalizedGazePosition);
+	bool DrawDebugSolidColor_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget);
+	bool DrawDebugUVMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget);
+	bool DrawDebugDepthMap_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget);
 
 public:	// EYE CONDITIONS
-	bool DrawCataracts_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const float InBlurStrength, const float InContrastReduction, const float InBrightThreshold, const float InGlareStrength);
-	bool DrawColorVisionDeficiency_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const EVARIDColorVisionDeficiencyType InCVDType);
-	bool DrawDiabeticRetinopathy_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, FRHITexture* InFloaterTextureArray, const FVector2f InNormalizedGazePosition, const uint8 InNumFloaters, const float InFloaterSpeed, const float InContrastReduction, const float InFloaterScale, const float InBlurStrength);
-	bool DrawGlaucoma_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, FRHITexture* InScotomaTexture, const FVector2f InNormalizedGazePosition);
-	bool DrawHyperopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const float InFocalLength_CM, const float InBlurStrength);
-	bool DrawMacularDegeneration_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InNormalizedGazePosition, const float InRadius, const float InBlurStrength);
-	bool DrawMyopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const float InFocalLength_CM, const float InBlurStrength);
-	bool DrawNystagmus_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InFrequency, const FVector2f InAmplitude);
-	bool DrawRetinitisPigmentosa_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FRenderTargetBinding& InRenderTargetBinding, const FVector2f InNormalizedGazePosition, const float InRadius);
+	bool DrawCataracts_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const float InBlurStrength, const float InContrastReduction, const float InBrightThreshold, const float InGlareStrength);
+	bool DrawColorVisionDeficiency_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const EVARIDColorVisionDeficiencyType InCVDType);
+	bool DrawDiabeticRetinopathy_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, FRHITexture* InFloaterTextureArrayRHI, const uint8 InNumFloaters, const float InFloaterSpeed, const float InFloaterScale, const float InBlurStrength, const float InContrastReduction);
+	bool DrawGlaucoma_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, FRHITexture* InScotomaTexture, const FVector2f InNormalizedGazePosition);
+	bool DrawHyperopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const float InFocalLength_CM, const float InBlurStrength);
+	bool DrawMacularDegeneration_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InNormalizedGazePosition, const float InRadius, const float InBlurStrength);
+	bool DrawMyopia_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const float InFocalLength_CM, const float InBlurStrength);
+	bool DrawNystagmus_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InFrequency, const FVector2f InAmplitude);
+	bool DrawRetinitisPigmentosa_RenderThread(FRDGBuilder& InGraphBuilder, const FScreenPassTexture& InSceneColor, const FSceneView& InView, const FScreenPassRenderTarget& InRenderTarget, const FVector2f InNormalizedGazePosition, const float InRadius);
 };

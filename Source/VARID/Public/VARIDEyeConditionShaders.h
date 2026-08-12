@@ -86,13 +86,12 @@ public:
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InSceneColorSRV)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2DArray<float>, InFloaterSRVArray)
 		SHADER_PARAMETER(int, InNumFloaters)
-		SHADER_PARAMETER(float, InFloaterSpeed)
-		SHADER_PARAMETER(float, InFloaterScale)
 		SHADER_PARAMETER(float, InContrastReduction)
-		SHADER_PARAMETER(FVector2f, InNormalizedGazePosition)
 		SHADER_PARAMETER(float, InAspectRatio)
 		SHADER_PARAMETER(float, InMaxMipLevel)
 		SHADER_PARAMETER(float, InBlurStrength)
+		SHADER_PARAMETER_ARRAY(FVector4f, InFloaterCenterScale, [32])
+		SHADER_PARAMETER_ARRAY(FVector4f, InFloaterRotation, [32])
 		RENDER_TARGET_BINDING_SLOTS()
 
 	END_SHADER_PARAMETER_STRUCT();
@@ -124,7 +123,6 @@ public:
 		SHADER_PARAMETER(float, InMaxMipLevel)
 		SHADER_PARAMETER(FVector2f, InNormalizedGazePosition)
 		SHADER_PARAMETER(float, InAspectRatio)
-		SHADER_PARAMETER(float, InScotomaScale)
 		RENDER_TARGET_BINDING_SLOTS()
 
 	END_SHADER_PARAMETER_STRUCT();
@@ -244,8 +242,7 @@ public:
 
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InSceneColorSRV)
-		SHADER_PARAMETER(FVector2f, InFrequency)
-		SHADER_PARAMETER(FVector2f, InAmplitude)
+		SHADER_PARAMETER(FVector2f, InOffset)
 		RENDER_TARGET_BINDING_SLOTS()
 
 	END_SHADER_PARAMETER_STRUCT();

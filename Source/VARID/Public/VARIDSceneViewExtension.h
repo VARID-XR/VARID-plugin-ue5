@@ -9,6 +9,7 @@
 #include "VARIDRendering.h"
 
 class FTextureResource;
+struct FVARIDEyeConditionState;
 
 class FVARIDSceneViewExtension : public FSceneViewExtensionBase
 {
@@ -46,6 +47,12 @@ public:
 	FScreenPassTexture PostProcessPassAfterTonemap_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& InOutInputs);
 
 private:
+	enum class EVARIDCachedEye : uint8
+	{
+		Mono,
+		Left,
+		Right
+	};
 
 	struct FVARIDRenderParameters
 	{
@@ -65,17 +72,26 @@ private:
 
 		EVARIDColorVisionDeficiencyType CVDType = EVARIDColorVisionDeficiencyType::None;
 
-		FRHITexture* ScotomaTextureRHI = nullptr;
+		FTextureRHIRef ScotomaTextureRHI;
 
-		FRHITexture* FloaterTextureArrayRHI = nullptr;
+		FTextureRHIRef FloaterTextureArrayRHI;
 		uint8 NumFloaters = 0.0f;
 		float FloaterSpeed = 0.0f;
 		float FloaterScale = 0.0f;
 	};
 
-	// Local cached copy of the data. Purely used by scene view extension render threads
-	FVARIDRenderParameters CachedRenderParams;
+	static EVARIDCachedEye GetCachedEyeForStereoViewIndex(int32 StereoViewIndex);
+	static FVARIDRenderParameters MakeRenderParameters_GameThread(const FVARIDEyeConditionState& EyeState);
+	static bool IsActive(const FVARIDRenderParameters& RenderParams);
 
+	FVARIDRenderParameters& GetCachedRenderParams(EVARIDCachedEye CachedEye);
+	const FVARIDRenderParameters& GetCachedRenderParams(EVARIDCachedEye CachedEye) const;
+	const FVARIDRenderParameters& ResolveCachedRenderParams(int32 StereoViewIndex) const;
+
+	// Local cached copies of the data. Purely used by scene view extension render threads.
+	FVARIDRenderParameters CachedMonoRenderParams;
+	FVARIDRenderParameters CachedLeftRenderParams;
+	FVARIDRenderParameters CachedRightRenderParams;
 
 	FVARIDRendering Rendering;
 };

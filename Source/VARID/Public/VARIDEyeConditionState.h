@@ -8,6 +8,9 @@
 #include "CoreMinimal.h"
 #include "VARIDEnums.h"
 
+class UTexture2D;
+class UTexture2DArray;
+
 // Used by the game thread to store the current eye condition parameters
 // All parameters combined for all eye conditions. 
 // Many parameters overlap between conditions, so this is a single struct to hold them all.
@@ -30,9 +33,9 @@ struct FVARIDEyeConditionState
 
 	EVARIDColorVisionDeficiencyType CVDType = EVARIDColorVisionDeficiencyType::None;
 
-	UTexture2D* ScotomaTexture = nullptr;
+	TObjectPtr<UTexture2D> ScotomaTexture = nullptr;
 
-	UTexture2DArray* FloaterTextureArray = nullptr;
+	TObjectPtr<UTexture2DArray> FloaterTextureArray = nullptr;
 	uint8 NumFloaters = 0.0f;
 	float FloaterSpeed = 0.0f;
 	float FloaterScale = 0.0f;

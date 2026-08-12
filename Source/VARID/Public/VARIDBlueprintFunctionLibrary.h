@@ -17,7 +17,7 @@ class UVARIDBlueprintFunctionLibrary : public UBlueprintFunctionLibrary
 
 public:
 	UFUNCTION(BlueprintCallable, category = "VARID")
-	static void BeginRendering(EVARIDSamplerType InSamplerType = EVARIDSamplerType::GaussianSampling);
+	static void BeginRendering(EVARIDSamplerType InSamplerType = EVARIDSamplerType::BilinearSampling);
 
 	UFUNCTION(BlueprintCallable, category = "VARID")
 	static void EndRendering();
